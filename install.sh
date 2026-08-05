@@ -48,12 +48,12 @@ die()  { printf "${R}[x] %s${N}\n" "$1" >&2; exit 1; }
 
 # Определяем загрузчик (curl или wget)
 if command -v curl >/dev/null 2>&1; then
-    FETCH="curl -fsSL --connect-timeout 15"
-    FETCH_FILE="curl -fsSL --connect-timeout 15 -o"
+    FETCH="curl -fsSL --connect-timeout 10 --max-time 25"
+    FETCH_FILE="curl -fsSL --connect-timeout 10 --max-time 300 -o"
     HAS_CURL="1"
 elif command -v wget >/dev/null 2>&1; then
-    FETCH="wget -qO- --timeout=15"
-    FETCH_FILE="wget -q --timeout=15 -O"
+    FETCH="wget -qO- --timeout=25"
+    FETCH_FILE="wget -q --timeout=300 -O"
     HAS_CURL="0"
 else
     die "Не найден curl или wget"
@@ -225,31 +225,49 @@ if [ "$need_sbx_install" = "1" ]; then
         return 1
     }
 
-    # 1. Сначала пробуем из своего Release (все пакеты в одном месте)
+    # 1. Прямая ссылка на файл в своём Release (без GitHub API — он может быть
+    #    недоступен/заблокирован). Имя файла и тег релиза известны заранее.
+    #    Тег релиза: v<PODKOP_VERSION>, файл: sing-box-extended_*_openwrt_<arch>[._compressed].ipk
     info "Ищу sing-box-extended в своём Release..."
-    api_own="$(api_get "https://api.github.com/repos/$PODKOP_REPO/releases?per_page=30")" || true
-    pick_sbx_url "$api_own" "$SBX_PREF_PATTERN" "$SBX_ALT_PATTERN"
-
-    # 2. Если нет — пробуем из папки bin/ репозитория
-    if [ -z "$sbx_url" ]; then
-        info "В своём Release нет ipk. Ищу в bin/ репозитория..."
-        api_bin="$(api_get "https://api.github.com/repos/$PODKOP_REPO/contents/bin")" || true
-        pick_sbx_url "$api_bin" "$SBX_PREF_PATTERN" "$SBX_ALT_PATTERN"
+    if [ "$SBX_USE_COMPRESSED" = "1" ]; then
+        SBX_KNOWN="sing-box-extended_1.13.14-extended-2.5.3_openwrt_${DISTRIB_ARCH}_compressed.${PKG_EXT}"
+    else
+        SBX_KNOWN="sing-box-extended_1.13.14-extended-2.5.3_openwrt_${DISTRIB_ARCH}.${PKG_EXT}"
+    fi
+    sbx_url="https://github.com/$PODKOP_REPO/releases/download/v${PODKOP_VERSION}/$SBX_KNOWN"
+    if ! $FETCH -o /dev/null "$sbx_url" 2>/dev/null; then
+        info "  прямой ссылки нет (v${PODKOP_VERSION}/$SBX_KNOWN) — ищу через API..."
+        sbx_url=""
     fi
 
-    # 3. Если и там нет — фолбэк на официальный репозиторий shtorm-7
+    # 2. Если нет — пробуем из папки bin/ репозитория (raw, без API)
+    if [ -z "$sbx_url" ]; then
+        info "В своём Release нет ipk. Ищу в bin/ репозитория..."
+        sbx_bin_url="$RAW_BASE/bin/$SBX_KNOWN"
+        if $FETCH -o /dev/null "$sbx_bin_url" 2>/dev/null; then
+            sbx_url="$sbx_bin_url"
+        fi
+    fi
+
+    # 3. Если и там нет — фолбэк на официальный репозиторий shtorm-7 (прямая ссылка)
     if [ -z "$sbx_url" ]; then
         info "В bin/ нет ipk для ${DISTRIB_ARCH}. Качаю из $SBX_REPO..."
-        api_response="$(api_get "https://api.github.com/repos/$SBX_REPO/releases?per_page=30")" || true
-        pick_sbx_url "$api_response" "$SBX_ALT_PATTERN"
-        if [ -z "$sbx_url" ]; then
-            warn "Не нашёл ipk для ${DISTRIB_ARCH} в последних релизах. Ищу в более старых..."
-            for _url in $(printf '%s' "$api_response" | tr ',' '\n' | grep 'browser_download_url' | grep "sing-box-extended_.*_openwrt_.*\.${PKG_EXT}" | awk -F'"' '{print $4}' | head -n 10); do
-                if echo "$_url" | grep -q "${DISTRIB_ARCH}"; then
-                    sbx_url="$_url"
-                    break
-                fi
-            done
+        SBX_VERSION_KNOWN="1.13.14-extended-2.5.3"
+        sbx_upstream="https://github.com/$SBX_REPO/releases/download/v${SBX_VERSION_KNOWN}/sing-box-extended_${SBX_VERSION_KNOWN}_openwrt_${DISTRIB_ARCH}.${PKG_EXT}"
+        if $FETCH -o /dev/null "$sbx_upstream" 2>/dev/null; then
+            sbx_url="$sbx_upstream"
+        else
+            warn "Прямой ссылки на $SBX_REPO нет — пробую GitHub API (может быть недоступно)..."
+            api_response="$(api_get "https://api.github.com/repos/$SBX_REPO/releases?per_page=30")" || true
+            pick_sbx_url "$api_response" "$SBX_ALT_PATTERN"
+            if [ -z "$sbx_url" ]; then
+                for _url in $(printf '%s' "$api_response" | tr ',' '\n' | grep 'browser_download_url' | grep "sing-box-extended_.*_openwrt_.*\.${PKG_EXT}" | awk -F'"' '{print $4}' | head -n 10); do
+                    if echo "$_url" | grep -q "${DISTRIB_ARCH}"; then
+                        sbx_url="$_url"
+                        break
+                    fi
+                done
+            fi
         fi
     fi
 
