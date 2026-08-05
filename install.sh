@@ -259,6 +259,11 @@ if [ "$need_sbx_install" = "1" ]; then
     download "$sbx_url" "$sbx_file" || die "Не удалось скачать sing-box-extended"
 
     [ -s "$sbx_file" ] || die "Скачанный файл пустой"
+    # Проверяем, что файл — настоящий ipk (gzip), а не HTML-ошибка/артефакт
+    if [ "$(xxd -l 2 -p "$sbx_file" 2>/dev/null)" != "1f8b" ]; then
+        warn "Файл sing-box не похож на ipk (ожидался gzip). Размер: $(ls -la "$sbx_file" | awk '{print $5}') байт"
+        die "Скачанный файл повреждён или это не пакет. Попробуйте ещё раз."
+    fi
 
     # Останавливаем podkop/sing-box на время замены
     /etc/init.d/podkop stop 2>/dev/null || true
@@ -268,8 +273,15 @@ if [ "$need_sbx_install" = "1" ]; then
         apk del sing-box sing-box-extended >/dev/null 2>&1 || true
         apk add --allow-untrusted "$sbx_file" || die "Не удалось установить sing-box-extended"
     else
+        # Ставим зависимости явно, чтобы opkg не падал из-за них
+        info "Ставлю зависимости sing-box (kmod-tun, kmod-nft-queue, kmod-inet-diag, firewall4, ca-bundle)..."
+        opkg install ca-bundle kmod-inet-diag kmod-tun firewall4 kmod-nft-queue 2>&1 || warn "Часть зависимостей не установилась (возможно, уже есть)"
+
         opkg remove --force-depends sing-box 2>/dev/null || true
-        opkg install --force-reinstall --force-overwrite "$sbx_file" || die "Не удалось установить sing-box-extended (зависимости: kmod-nft-queue и др.)"
+        if ! opkg install --force-reinstall --force-overwrite "$sbx_file"; then
+            warn "Прямая установка не удалась — пробую с --force-depends..."
+            opkg install --force-depends --force-reinstall --force-overwrite "$sbx_file" || die "Не удалось установить sing-box-extended (зависимости: kmod-nft-queue и др.)"
+        fi
     fi
 
     if [ ! -f /usr/bin/sing-box ]; then
