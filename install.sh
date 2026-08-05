@@ -86,10 +86,10 @@ info "Маршрутизатор: $(cat /tmp/sysinfo/model 2>/dev/null || echo '
 info "OpenWrt: $DISTRIB_RELEASE ($DISTRIB_REVISION)"
 info "Архитектура: ${DISTRIB_ARCH:-не определена}"
 
-# Место на диске
+# Место на диске (sing-box-extended распакованный занимает ~67 МБ)
 AVAILABLE_SPACE=$(df /overlay | awk 'NR==2 {print $4}')
-if [ "$AVAILABLE_SPACE" -lt 15360 ]; then
-    die "Недостаточно места на /overlay: $((AVAILABLE_SPACE/1024)) МБ (нужно минимум 15 МБ)"
+if [ "$AVAILABLE_SPACE" -lt 81920 ]; then
+    die "Недостаточно места на /overlay: $((AVAILABLE_SPACE/1024)) МБ (нужно минимум 80 МБ: sing-box-extended распакованный ~67 МБ + запас)"
 fi
 
 # Проверка DNS
