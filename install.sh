@@ -333,6 +333,13 @@ else
         download "$RAW_BASE/bin/$ru_file" "$DOWNLOAD_DIR/$ru_file" || warn "Не удалось скачать русский язык"
     fi
 
+    info "Ставлю зависимости Podkop (kmod-nft-tproxy, coreutils-base64, bind-dig, jq, curl)..."
+    if [ "$PKG_MANAGER" = "apk" ]; then
+        apk add kmod-nft-tproxy coreutils-base64 bind-dig jq curl >/dev/null 2>&1 || warn "Часть зависимостей podkop не установилась (возможно, уже есть)"
+    else
+        opkg install kmod-nft-tproxy coreutils-base64 bind-dig jq curl >/dev/null 2>&1 || warn "Часть зависимостей podkop не установилась (возможно, уже есть)"
+    fi
+
     info "Устанавливаю Podkop..."
     for f in "$DOWNLOAD_DIR"/podkop-v*.${PKG_EXT}; do
         [ -f "$f" ] && pkg_install "$f" || warn "  (podkop: установлен или требует зависимости)"
