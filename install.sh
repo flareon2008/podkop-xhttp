@@ -277,10 +277,24 @@ if [ "$need_sbx_install" = "1" ]; then
     download "$sbx_url" "$sbx_file" || die "Не удалось скачать sing-box-extended"
 
     [ -s "$sbx_file" ] || die "Скачанный файл пустой"
-    # Проверяем, что файл — настоящий ipk (gzip), а не HTML-ошибка/артефакт
-    if [ "$(xxd -l 2 -p "$sbx_file" 2>/dev/null)" != "1f8b" ]; then
-        warn "Файл sing-box не похож на ipk (ожидался gzip). Размер: $(ls -la "$sbx_file" | awk '{print $5}') байт"
-        die "Скачанный файл повреждён или это не пакет. Попробуйте ещё раз."
+    # Проверяем, что файл — настоящий ipk (gzip), а не HTML-ошибка/артефакт.
+    # Внимание: на OpenWrt нет xxd (из vim) и бывает нет od -An, поэтому пробуем
+    # несколько способов: od (busybox), затем gzip -t (busybox), затем head.
+    SBX_MAGIC="$(od -An -tx1 -N2 "$sbx_file" 2>/dev/null | tr -d ' \n')"
+    if [ -z "$SBX_MAGIC" ]; then
+        SBX_MAGIC="$(head -c 2 "$sbx_file" 2>/dev/null | od -tx1 2>/dev/null | head -n1 | awk '{print $2$3}')"
+    fi
+    if [ -z "$SBX_MAGIC" ]; then
+        SBX_MAGIC="$(dd if="$sbx_file" bs=1 count=2 2>/dev/null | hexdump -v -e '2/1 "%02x"' 2>/dev/null)"
+    fi
+    if [ "$SBX_MAGIC" != "1f8b" ]; then
+        # Финальная проверка через gzip (работает в busybox)
+        if command -v gzip >/dev/null 2>&1 && gzip -t "$sbx_file" 2>/dev/null; then
+            : # валидный gzip — ок
+        else
+            warn "Файл sing-box не похож на ipk (ожидался gzip). Размер: $(ls -la "$sbx_file" | awk '{print $5}') байт"
+            die "Скачанный файл повреждён или это не пакет. Попробуйте ещё раз."
+        fi
     fi
 
     # Останавливаем podkop/sing-box на время замены
