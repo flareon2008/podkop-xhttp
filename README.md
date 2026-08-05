@@ -48,6 +48,7 @@ bin/                       — готовые пакеты (ipk):
   ├─ luci-app-podkop-v0.8-r1-all.ipk
   ├─ luci-i18n-podkop-ru-0.8-r1.ipk
   └─ sing-box-extended_1.13.14-extended-2.5.3_openwrt_aarch64_cortex-a53.ipk
+  └─ sing-box-extended_1.13.14-extended-2.5.3_openwrt_aarch64_cortex-a53_compressed.ipk  (UPX, ~15 МБ — для роутеров с малым местом)
 src/podkop/                — исходники podkop 0.8 с патчем xhttp
 src/luci-app-podkop/       — исходники интерфейса (бренд xHTTP Mod, ru-перевод)
 patch/patch-xhttp.sh       — автономный патч для уже установленного Podkop
@@ -140,7 +141,10 @@ cd src/podkop && make PODKOP_VERSION=0.8  # в окружении OpenWrt SDK
 ## Требования
 
 - OpenWrt 24.10 или новее
-- **Минимум 80 МБ свободного места на `/overlay`** (sing-box-extended распакованный занимает ~67 МБ + Podkop/LuCI ~0.4 МБ + запас)
+- **Минимум 80 МБ свободного места на `/overlay`** для обычной сборки sing-box-extended
+  (распакованный бинарник ~67 МБ + Podkop/LuCI ~0.4 МБ + запас).
+  Если места меньше, установщик **автоматически выберет сжатую (UPX) сборку** (~15 МБ)
+  — достаточно **минимум 20 МБ**.
 - root-доступ по SSH
 
 > Проверить свободное место на роутере: `df -h /overlay`

@@ -86,10 +86,18 @@ info "Маршрутизатор: $(cat /tmp/sysinfo/model 2>/dev/null || echo '
 info "OpenWrt: $DISTRIB_RELEASE ($DISTRIB_REVISION)"
 info "Архитектура: ${DISTRIB_ARCH:-не определена}"
 
-# Место на диске (sing-box-extended распакованный занимает ~67 МБ)
+# Место на диске
+#   обычный sing-box-extended распакованный ~67 МБ -> нужно >= 80 МБ
+#   сжатый (UPX) sing-box-extended ~15 МБ           -> нужно >= 20 МБ
 AVAILABLE_SPACE=$(df /overlay | awk 'NR==2 {print $4}')
-if [ "$AVAILABLE_SPACE" -lt 81920 ]; then
-    die "Недостаточно места на /overlay: $((AVAILABLE_SPACE/1024)) МБ (нужно минимум 80 МБ: sing-box-extended распакованный ~67 МБ + запас)"
+SBX_USE_COMPRESSED="0"
+if [ "$AVAILABLE_SPACE" -ge 81920 ]; then
+    info "Места на /overlay достаточно: $((AVAILABLE_SPACE/1024)) МБ (ставлю обычную сборку sing-box)"
+elif [ "$AVAILABLE_SPACE" -ge 20480 ]; then
+    SBX_USE_COMPRESSED="1"
+    info "Места на /overlay: $((AVAILABLE_SPACE/1024)) МБ — ставлю СЖАТУЮ (UPX) сборку sing-box (~15 МБ)"
+else
+    die "Слишком мало места на /overlay: $((AVAILABLE_SPACE/1024)) МБ (нужно минимум 20 МБ)"
 fi
 
 # Проверка DNS
@@ -192,39 +200,48 @@ if [ "$need_sbx_install" = "1" ]; then
     sbx_file="$tmp_dir/sing-box-extended.${PKG_EXT}"
     sbx_url=""
 
-    # Сначала пробуем из своего Release (все пакеты в одном месте)
-    info "Ищу последний стабильный релиз sing-box-extended (в своём Release)..."
-    api_own="$(api_get "https://api.github.com/repos/$PODKOP_REPO/releases?per_page=30")" || true
-    for _url in $(printf '%s' "$api_own" | tr ',' '\n' | grep 'browser_download_url' | grep "sing-box-extended_.*_openwrt_${DISTRIB_ARCH}\.${PKG_EXT}" | awk -F'"' '{print $4}' | head -n 1); do
-        if echo "$_url" | grep -q "${DISTRIB_ARCH}"; then
-            sbx_url="$_url"
-            break
-        fi
-    done
-
-    # Если в своём Release нет — пробуем из папки bin/ репозитория
-    if [ -z "$sbx_url" ]; then
-        info "В своём Release нет ipk для ${DISTRIB_ARCH}. Ищу в bin/ репозитория..."
-        api_bin="$(api_get "https://api.github.com/repos/$PODKOP_REPO/contents/bin")" || true
-        for _url in $(printf '%s' "$api_bin" | tr ',' '\n' | grep 'download_url' | grep "sing-box-extended_.*_openwrt_${DISTRIB_ARCH}\.${PKG_EXT}" | awk -F'"' '{print $4}' | head -n 1); do
-            if echo "$_url" | grep -q "${DISTRIB_ARCH}"; then
-                sbx_url="$_url"
-                break
-            fi
-        done
+    # Паттерн имени файла зависит от режима (обычный / сжатый UPX)
+    if [ "$SBX_USE_COMPRESSED" = "1" ]; then
+        SBX_PREF_PATTERN="sing-box-extended_.*_openwrt_${DISTRIB_ARCH}_compressed\.${PKG_EXT}"
+        SBX_ALT_PATTERN="sing-box-extended_.*_openwrt_${DISTRIB_ARCH}\.${PKG_EXT}"
+    else
+        SBX_PREF_PATTERN="sing-box-extended_.*_openwrt_${DISTRIB_ARCH}\.${PKG_EXT}"
+        SBX_ALT_PATTERN="sing-box-extended_.*_openwrt_${DISTRIB_ARCH}_compressed\.${PKG_EXT}"
     fi
 
-    # Если и там нет — фолбэк на официальный репозиторий
+    # Поиск по списку URL: сначала предпочитаемый вариант, потом запасной
+    pick_sbx_url() {
+        # $1 — список URL, $2..$n — паттерны в порядке приоритета
+        local _list="$1"; shift
+        local _pat _url
+        for _pat in "$@"; do
+            for _url in $(printf '%s' "$_list" | tr ',' '\n' | grep 'browser_download_url' | grep -E "$_pat" | awk -F'"' '{print $4}' | head -n 1); do
+                if [ -n "$_url" ]; then
+                    sbx_url="$_url"
+                    return 0
+                fi
+            done
+        done
+        return 1
+    }
+
+    # 1. Сначала пробуем из своего Release (все пакеты в одном месте)
+    info "Ищу sing-box-extended в своём Release..."
+    api_own="$(api_get "https://api.github.com/repos/$PODKOP_REPO/releases?per_page=30")" || true
+    pick_sbx_url "$api_own" "$SBX_PREF_PATTERN" "$SBX_ALT_PATTERN"
+
+    # 2. Если нет — пробуем из папки bin/ репозитория
+    if [ -z "$sbx_url" ]; then
+        info "В своём Release нет ipk. Ищу в bin/ репозитория..."
+        api_bin="$(api_get "https://api.github.com/repos/$PODKOP_REPO/contents/bin")" || true
+        pick_sbx_url "$api_bin" "$SBX_PREF_PATTERN" "$SBX_ALT_PATTERN"
+    fi
+
+    # 3. Если и там нет — фолбэк на официальный репозиторий shtorm-7
     if [ -z "$sbx_url" ]; then
         info "В bin/ нет ipk для ${DISTRIB_ARCH}. Качаю из $SBX_REPO..."
         api_response="$(api_get "https://api.github.com/repos/$SBX_REPO/releases?per_page=30")" || true
-        for tag in $(printf '%s' "$api_response" | tr ',' '\n' | grep '"tag_name"' | awk -F'"' '{print $4}' | grep -v -iE "rc|beta|alpha" | head -n 5); do
-            _url="$(printf '%s' "$api_response" | tr ',' '\n' | grep 'browser_download_url' | grep "sing-box-extended_.*_openwrt_${DISTRIB_ARCH}\.${PKG_EXT}" | head -n1 | awk -F'"' '{print $4}')"
-            if [ -n "$_url" ]; then
-                sbx_url="$_url"
-                break
-            fi
-        done
+        pick_sbx_url "$api_response" "$SBX_ALT_PATTERN"
         if [ -z "$sbx_url" ]; then
             warn "Не нашёл ipk для ${DISTRIB_ARCH} в последних релизах. Ищу в более старых..."
             for _url in $(printf '%s' "$api_response" | tr ',' '\n' | grep 'browser_download_url' | grep "sing-box-extended_.*_openwrt_.*\.${PKG_EXT}" | awk -F'"' '{print $4}' | head -n 10); do
